@@ -10,7 +10,7 @@ from tlsfuzzer.runner import Runner
 from tlsfuzzer.messages import Connect, ClientHelloGenerator, \
         ClientKeyExchangeGenerator, ChangeCipherSpecGenerator, \
         FinishedGenerator, ApplicationDataGenerator, \
-        fuzz_mac
+        fuzz_mac, fuzz_seal
 from tlsfuzzer.expect import ExpectServerHello, ExpectCertificate, \
         ExpectServerHelloDone, ExpectChangeCipherSpec, ExpectFinished, \
         ExpectAlert, ExpectClose
@@ -20,6 +20,9 @@ from tlslite.constants import CipherSuite, AlertLevel, AlertDescription
 def main():
     """check if incorrect MAC hash is rejected by server"""
     conversations = {}
+
+    #aead = True # GCM
+    aead = False # CBC
 
     for pos, val in [
                      (-1, 0x01),
@@ -36,8 +39,9 @@ def main():
                      ]:
         conversation = Connect("localhost", 4433)
         node = conversation
-        ciphers = [CipherSuite.TLS_RSA_WITH_AES_128_CBC_SHA,
-                   CipherSuite.TLS_EMPTY_RENEGOTIATION_INFO_SCSV]
+        suite = CipherSuite.TLS_RSA_WITH_AES_128_GCM_SHA256 if aead else \
+                CipherSuite.TLS_RSA_WITH_AES_128_CBC_SHA
+        ciphers = [suite, CipherSuite.TLS_EMPTY_RENEGOTIATION_INFO_SCSV]
         node = node.add_child(ClientHelloGenerator(ciphers))
         node = node.add_child(ExpectServerHello())
         node = node.add_child(ExpectCertificate())
@@ -47,12 +51,13 @@ def main():
         node = node.add_child(FinishedGenerator())
         node = node.add_child(ExpectChangeCipherSpec())
         node = node.add_child(ExpectFinished())
-        node = node.add_child(fuzz_mac(ApplicationDataGenerator(
-                                                        b"GET / HTTP/1.0\n\n"),
-                                       xors={pos:val}))
+        node = node.add_child( \
+            fuzz_seal(ApplicationDataGenerator( b"GET / HTTP/1.0\n\n"), xors={pos:val})
+            if aead else
+            fuzz_mac(ApplicationDataGenerator( b"GET / HTTP/1.0\n\n"), xors={pos:val})
+            )
         node = node.add_child(ExpectAlert(AlertLevel.fatal,
                                           AlertDescription.bad_record_mac))
-#        node.next_sibling = ExpectClose()
         node = node.add_child(ExpectClose())
 
         conversations["XOR position " + str(pos) + " with " + str(hex(val))] = \

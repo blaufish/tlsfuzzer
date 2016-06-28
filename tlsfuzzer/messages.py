@@ -764,6 +764,39 @@ def fuzz_mac(generator, substitutions=None, xors=None):
 
     return generator
 
+def fuzz_seal(generator, substitutions=None, xors=None):
+    """Change arbitrary bytes of the AEAD sealed block"""
+    def new_generate(state, self=generator,
+                     old_generate=generator.generate,
+                     substitutions=substitutions,
+                     xors=xors):
+        """Monkey patch to modify sealed AEAD block"""
+        msg = old_generate(state)
+
+        old_encryptThenSeal = state.msg_sock._encryptThenSeal
+
+        self.old_encryptThenSeal = old_encryptThenSeal
+
+        def new_encryptThenSeal(buf, contentType,
+                              old_encryptThenSeal=old_encryptThenSeal,
+                              substitutions=substitutions,
+                              xors=xors):
+            """Monkey patch for the AEAD method of msg socket"""
+            sealed = old_encryptThenSeal(buf, contentType)
+
+            sealed = substitute_and_xor(sealed, substitutions, xors)
+
+            return sealed
+
+        state.msg_sock._encryptThenSeal = new_encryptThenSeal
+
+        return msg
+
+    generator.generate = new_generate
+    post_send_msg_sock_restore(generator, '_encryptThenSeal', 'old_encryptThenSeal')
+    return generator
+
+
 def div_ceil(divident, divisor):
     """Perform integer division of divident by divisor, round up"""
     quotient, reminder = divmod(divident, divisor)
